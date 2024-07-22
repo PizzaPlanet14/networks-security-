@@ -1,6 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import random
+import heapq
 
 class Vertex:
     def __init__(self, Vid, x, y):
@@ -101,31 +102,30 @@ class Network:
         self.print_results(algorithm, alpha)
         self.plot_rate_results(rates_over_time, algorithm, alpha)
 
-
     def initialize_lagrangian_multipliers(self):
         for link in self.links:
-            link.LagrangianMultiplier = 0.1   # Initialize with a small positive value to avoid zero initialization issues
+            link.LagrangianMultiplier = 0.2   # Initialize with a small positive value to avoid zero initialization issues
 
-    def calculate_primal_rate(self, user, alpha, step_size=0.00001):
+    def calculate_primal_rate(self, user, alpha, step_size=0.0001):
         if alpha == float('inf'):
             avg_rate = sum(u.rate for u in self.users) / len(self.users)
-            if user.rate < avg_rate:
-                return min(1, user.rate + step_size)
-            else:
-                return max(0, user.rate - step_size)
+            return max(0, min(1, avg_rate + step_size * 0.0001)) if user.rate < avg_rate else max(0, user.rate - step_size * 0.0001)
         
         if user.rate == 0:
             user.rate = 1e-6  # Small positive value to avoid zero division error
-
+        
         payment = 0
-        for link in self.get_user_links(user):  # calculate the payment of the user
+        for link in self.get_user_links(user):
             rate_sum = sum(u.rate for u in self.users if link in self.get_user_links(u))
             payment += self.penalty_function(rate_sum, link.capacity)
+        
         return max(0, min(1, step_size * (pow(user.rate, -alpha) - payment) + user.rate))
 
+    def calculate_dual_rate(self, user, alpha, step_size=0.00001):
+        if alpha == float('inf'):
+            max_excess = max((sum(u.rate for u in self.users if link in self.get_user_links(u)) - link.capacity) for link in self.get_user_links(user))
+            return max(0, min(1, user.rate - step_size * max_excess))
 
-
-    def calculate_dual_rate(self, user, alpha, step_size=0.0001):
         Q_l = 0
         for link in self.get_user_links(user):
             rate_sum = sum(u.rate for u in self.users if link in self.get_user_links(u))
@@ -137,10 +137,6 @@ class Network:
             return 0.0001  # A small positive rate to avoid zero rate issue
 
         return pow(Q_l, -1 / alpha)
-
-
-
-
 
     def penalty_function(self, rate, capacity):
         return rate * capacity if rate < capacity else pow(rate, 3) * 2
@@ -186,25 +182,74 @@ class Network:
         plt.ylabel('Y Coordinate')
         plt.show()
 
+    def dijkstra(self, start_vid):
+        distances = {vertex.Vid: float('inf') for vertex in self.vertices}
+        distances[start_vid] = 0
+        pq = [(0, start_vid)]
+        paths = {vertex.Vid: [] for vertex in self.vertices}
+
+        while pq:
+            current_distance, current_vertex = heapq.heappop(pq)
+
+            if current_distance > distances[current_vertex]:
+                continue
+
+            for neighbor_vid in self.vertices[current_vertex - 1].neighbors:
+                link = self.get_link(current_vertex, neighbor_vid)
+                distance = current_distance + link.distance
+
+                if distance < distances[neighbor_vid]:
+                    distances[neighbor_vid] = distance
+                    heapq.heappush(pq, (distance, neighbor_vid))
+                    paths[neighbor_vid] = paths[current_vertex] + [current_vertex]
+
+        for vertex in self.vertices:
+            paths[vertex.Vid].append(vertex.Vid)
+
+        return distances, paths
+
+    def bellman_ford(self, start_vid):
+        distances = {vertex.Vid: float('inf') for vertex in self.vertices}
+        distances[start_vid] = 0
+        paths = {vertex.Vid: [] for vertex in self.vertices}
+
+        for _ in range(len(self.vertices) - 1):
+            for link in self.links:
+                u, v, weight = link.vertex1.Vid, link.vertex2.Vid, link.distance
+                if distances[u] != float('inf') and distances[u] + weight < distances[v]:
+                    distances[v] = distances[u] + weight
+                    paths[v] = paths[u] + [u]
+
+                if distances[v] != float('inf') and distances[v] + weight < distances[u]:
+                    distances[u] = distances[v] + weight
+                    paths[u] = paths[v] + [v]
+
+        for vertex in self.vertices:
+            paths[vertex.Vid].append(vertex.Vid)
+
+        return distances, paths
+
 def menu():
     while True:
         print("Choose a question to run the simulation:")
         print("2. NUM Problem using Primal Algorithm (TCP Reno)")
         print("3. NUM Problem using Dual Algorithm (TCP Vegas)")
         print("4. Generate Graphs for Different Alphas")
+        print("5. Dijkstra's Algorithm")
+        print("6. Bellman-Ford Algorithm")
         print("0. Exit")
         
         choice = input("Enter your choice: ")
         
         if choice == "2":
             alpha = float('inf')
-            iterations = 100000
+            iterations = 10000
             network = Network()
             network.plot_network()
             network.simulate_num_problem(alpha, iterations, algorithm='Primal')
         elif choice == "3":
             alpha = float('1')
-            iterations = 100000
+            iterations = 10000
             network = Network()
             network.plot_network()
             network.simulate_num_problem(alpha, iterations, algorithm='Dual')
@@ -215,6 +260,22 @@ def menu():
             for alpha in alphas:
                 network.simulate_num_problem(alpha, 100000, algorithm='Primal')
                 network.simulate_num_problem(alpha, 100000, algorithm='Dual')
+        elif choice == "5":
+            network = Network()
+            network.plot_network()
+            start_vertex = int(input("Enter the start vertex ID for Dijkstra's algorithm: "))
+            distances, paths = network.dijkstra(start_vertex)
+            print("Dijkstra's Algorithm Results:")
+            for vertex in network.vertices:
+                print(f"Vertex {vertex.Vid}: Distance = {distances[vertex.Vid]}, Path = {' -> '.join(map(str, paths[vertex.Vid]))}")
+        elif choice == "6":
+            network = Network()
+            network.plot_network()
+            start_vertex = int(input("Enter the start vertex ID for Bellman-Ford algorithm: "))
+            distances, paths = network.bellman_ford(start_vertex)
+            print("Bellman-Ford Algorithm Results:")
+            for vertex in network.vertices:
+                print(f"Vertex {vertex.Vid}: Distance = {distances[vertex.Vid]}, Path = {' -> '.join(map(str, paths[vertex.Vid]))}")
         elif choice == "0":
             break
         else:
